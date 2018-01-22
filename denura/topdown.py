@@ -1,7 +1,10 @@
+import math
 import torch
 from torch import nn
 from torch.autograd import Variable
 from torch.nn import functional, init
+from util import mask_time
+from lstm import LSTMCell
 
 
 class TopDownLSTMCell(nn.Module):
@@ -79,23 +82,23 @@ class TopDownLSTMCell(nn.Module):
         return s.format(name=self.__class__.__name__, **self.__dict__)
 
 
-class TodDownLSTM(nn.Module):
+class TopDownLSTM(nn.Module):
 
     """A module that runs multiple steps of TopDownLSTM."""
 
-    def __init__(self, input_size, hidden_size, num_layers=3,
-                 use_bias=True, batch_first=False, batch_first_out=False,
+    def __init__(self, input_size, hidden_size, num_layers=2,
+                 use_bias=True, batch_first=False,
                  dropout=0, **kwargs):
-        super(MultiLevelLSTM, self).__init__()
-        print("Running custom MultilevelLSTM")
+        super(TopDownLSTM, self).__init__()
         assert num_layers >= 2, "Number of layers must be >= 2."
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.use_bias = use_bias
         self.batch_first = batch_first
-        self.batch_first_out = batch_first_out
+        self.batch_first_out = self.batch_first
         self.dropout = dropout
+        # All layers, but top are TopDownLSTMCell
         for layer in range(num_layers-1):
             layer_input_size = input_size if layer == 0 else hidden_size
             cell = TopDownLSTMCell(input_size=layer_input_size,
@@ -119,7 +122,7 @@ class TodDownLSTM(nn.Module):
             cell.reset_parameters()
 
 
-    def forward(self, input_, length=None, hx=None):
+    def forward(self, input_, hx=None, length=None):
         if self.batch_first:
             input_ = input_.transpose(0, 1)
         max_time, batch_size, _ = input_.size()
@@ -128,64 +131,52 @@ class TodDownLSTM(nn.Module):
         if input_.is_cuda:
             device = input_.get_device()
             length = length.cuda(device)
-        if hx is None:
-            hx = Variable(input_.data.new(batch_size, self.hidden_size).zero_())
-            hx = (hx, hx)
-        
-        # Array to hold data h_t for all layers
-        Ht = Variable(input_.data.new(batch_size, self.num_layers, self.hidden_size).zero_())
-        # Array to hold data c_t for all layers
-        C = Variable(input_.data.new(batch_size, self.num_layers, self.hidden_size).zero_())
-        # Array to hold data h_t for all layers
+        if hx is None:     
+            # Array to hold data h_t for all layers
+            Ht = Variable(input_.data.new(self.num_layers, batch_size, self.hidden_size).zero_())
+            # Array to hold data c_t for all layers
+            C = Variable(input_.data.new(self.num_layers, batch_size, self.hidden_size).zero_())
+            # Array to hold data h_t for all layers
+        Ht, C = hx
         h_n = []
         c_n = []
-        layer_output = None
         max_time = input_.size(0)
         output = []
         max_time = input_.size(0)
         output = []
         for t in range(max_time):
             for l in range(self.num_layers):
-                # Run lowest layer, special because it takes the word-embeddings
+                # Run lowest layer, special case, because it takes the word-embeddings
                 cell = self.get_cell(l)
-                hx = (Ht[:, l], C[:, l])       # previous step from layer l
+                hx = (Ht[l], C[l])       # previous step from layer l
                 if l == 0:
-                    top = Ht[:, 1]
-                    bottom = input_[t]
-                    h_next, c_next = cell(input_bottom=bottom, 
-                                          input_top=top,
-                                          hx=(Ht[:, 0], C[:, 0]))
-                    mask = (t < length).float().unsqueeze(1).expand_as(h_next)
-                    h_next = h_next*mask + hx[0]*(1 - mask)
-                    c_next = c_next*mask + hx[1]*(1 - mask)
-                # Replace with current state
-                elif l > 0 and l < self.num_layers - 1:
-                    top = Ht[:, l + 1]      # previous step from higher layer
-                    bottom = Ht[:, l -1]    # Current step from lower layer 
+                    top, bottom = Ht[1], input_[t]
                     h_next, c_next = cell(input_bottom=bottom, 
                                           input_top=top,
                                           hx=hx)
-                    mask = (t < length).float().unsqueeze(1).expand_as(h_next)
-                    h_next = h_next*mask + hx[0]*(1 - mask)
-                    c_next = c_next*mask + hx[1]*(1 - mask)
+                    h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
+                # Replace with current state
+                elif l > 0 and l < self.num_layers - 1:
+                    top, bottom = Ht[l + 1], Ht[l - 1] 
+                    h_next, c_next = cell(input_bottom=bottom, 
+                                          input_top=top,
+                                          hx=hx)
+                    h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
                 # Run top layer vanilla LSTM
                 else:
-                    inp = Ht[:, l - 1]   # input is just the activation of the penultimate layer
+                    inp = Ht[l - 1]   # input is just the activation of the penultimate layer
                     h_next, c_next = cell(input_=inp, hx=hx)
-                    mask = (t < length).float().unsqueeze(1).expand_as(h_next)
-                    h_next = h_next*mask + hx[0]*(1 - mask)
-                    c_next = c_next*mask + hx[1]*(1 - mask)
+                    h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
                     output.append(h_next)
                 # Update H and C arrays, but not in-place, because of autograd 
                 C_ = C.clone()
                 Ht_ = Ht.clone()
-                C_[:, l] = C[:, l] * 0 + c_next
-                Ht_[:, l] = Ht[:, l] * 0 + h_next
+                C_[l] = C[l] * 0 + c_next
+                Ht_[l] = Ht[l] * 0 + h_next
                 C = C_
                 Ht = Ht_
         output = torch.stack(output, 0)
         if self.batch_first_out:
             output = output.transpose(1, 0)
-        # FIXME return interediate hidden states
-        return output, (None, None)
+        return output, (Ht, C)
 
