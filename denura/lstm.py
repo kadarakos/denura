@@ -91,7 +91,7 @@ class LSTM(nn.Module):
     """A module that runs multiple steps of LSTM."""
 
     def __init__(self, input_size, hidden_size, num_layers=1,
-                 use_bias=True, batch_first=False, batch_first_out=False,
+                 use_bias=True, batch_first=False,
                  dropout=0, **kwargs):
         super(LSTM, self).__init__()
         print("Running custom LSTM")
@@ -100,7 +100,7 @@ class LSTM(nn.Module):
         self.num_layers = num_layers
         self.use_bias = use_bias
         self.batch_first = batch_first
-        self.batch_first_out = batch_first_out
+        self.batch_first_out = self.batch_first
         self.dropout = dropout
         for layer in range(num_layers):
             layer_input_size = input_size if layer == 0 else hidden_size
