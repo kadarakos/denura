@@ -154,7 +154,11 @@ class LSTM(nn.Module):
             cell = self.get_cell(layer)
             layer_output, (layer_h_n, layer_c_n) = LSTM._forward_rnn(
                 cell=cell, input_=input_,  hx=(h0, c0), length=length)
-            input_ = self.dropout_layer(layer_output)
+            # Don't apply dropout to last layer (PyTorch default)
+            if layer < self.num_layers -1:
+                input_ = self.dropout_layer(layer_output)
+            else:
+                input_ = layer_output
             h_n.append(layer_h_n)
             c_n.append(layer_c_n)
         output = layer_output
