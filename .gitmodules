@@ -1,0 +1,3 @@
+[submodule "denura/benchmarks/pytorch-language-model"]
+	path = denura/benchmarks/pytorch-language-model
+	url = https://github.com/kadarakos/pytorch-language-model.git
