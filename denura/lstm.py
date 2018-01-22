@@ -90,12 +90,11 @@ class LSTM(nn.Module):
 
     """A module that runs multiple steps of LSTM."""
 
-    def __init__(self, cell_class, input_size, hidden_size, num_layers=1,
+    def __init__(self, input_size, hidden_size, num_layers=1,
                  use_bias=True, batch_first=False, batch_first_out=False,
                  dropout=0, **kwargs):
         super(LSTM, self).__init__()
         print("Running custom LSTM")
-        self.cell_class = cell_class
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -105,7 +104,7 @@ class LSTM(nn.Module):
         self.dropout = dropout
         for layer in range(num_layers):
             layer_input_size = input_size if layer == 0 else hidden_size
-            cell = cell_class(input_size=layer_input_size,
+            cell = LSTMCell(input_size=layer_input_size,
                               hidden_size=hidden_size,
                               **kwargs)
             setattr(self, 'cell_{}'.format(layer), cell)
@@ -121,7 +120,7 @@ class LSTM(nn.Module):
             cell.reset_parameters()
 
     @staticmethod
-    def _forward_rnn(cell, input_, length, hx):
+    def _forward_rnn(cell, input_,  hx, length):
         max_time = input_.size(0)
         output = []
         for time in range(max_time):
@@ -135,7 +134,7 @@ class LSTM(nn.Module):
         output = torch.stack(output, 0)
         return output, hx
 
-    def forward(self, input_, length=None, hx=None):
+    def forward(self, input_, hx=None, length=None):
         if self.batch_first:
             input_ = input_.transpose(0, 1)
         max_time, batch_size, _ = input_.size()
@@ -145,15 +144,16 @@ class LSTM(nn.Module):
             device = input_.get_device()
             length = length.cuda(device)
         if hx is None:
-            hx = Variable(input_.data.new(batch_size, self.hidden_size).zero_())
+            hx = Variable(input_.data.new(num_layers, batch_size, self.hidden_size).zero_())
             hx = (hx, hx)
         h_n = []
         c_n = []
         layer_output = None
         for layer in range(self.num_layers):
+            h0, c0 = hx[0][layer], hx[1][layer]
             cell = self.get_cell(layer)
             layer_output, (layer_h_n, layer_c_n) = LSTM._forward_rnn(
-                cell=cell, input_=input_, length=length, hx=hx)
+                cell=cell, input_=input_,  hx=(h0, c0), length=length)
             input_ = self.dropout_layer(layer_output)
             h_n.append(layer_h_n)
             c_n.append(layer_c_n)
