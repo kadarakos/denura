@@ -33,7 +33,8 @@ class LSTMCell(nn.Module):
         self.weight_hh = nn.Parameter(
             torch.FloatTensor(hidden_size, 4 * hidden_size))
         if use_bias:
-            self.bias = nn.Parameter(torch.FloatTensor(4 * hidden_size))
+            self.bias_i = nn.Parameter(torch.FloatTensor(4 * hidden_size))
+            self.bias_h = nn.Parameter(torch.FloatTensor(4 * hidden_size))
         else:
             self.register_parameter('bias', None)
         if self.layernorm:
@@ -50,7 +51,8 @@ class LSTMCell(nn.Module):
         for weight in self.parameters():
             weight.data.uniform_(-stdv, stdv) 
         if self.use_bias:
-            init.constant(self.bias.data, val=0)
+            init.constant(self.bias_i.data, val=0)
+            init.constant(self.bias_h.data, val=0)
 
 
     def forward(self, input_, hx):
@@ -65,16 +67,14 @@ class LSTMCell(nn.Module):
         Returns:
             h_1, c_1: Tensors containing the next hidden and cell state.
         """
-
         h_0, c_0 = hx
         batch_size = h_0.size(0)
-        bias_batch = (self.bias.unsqueeze(0)
-                      .expand(batch_size, *self.bias.size()))
-        wh_b = torch.addmm(bias_batch, h_0, self.weight_hh)
-        wi = torch.mm(input_, self.weight_ih)
-        if self.layernorm:
-            wi = self.ln_i2h(wi)
-            wh_b = self.ln_h2h(wh_b)
+        bias_batch_i = (self.bias_i.unsqueeze(0)
+                        .expand(batch_size, *self.bias_i.size()))
+        bias_batch_h = (self.bias_h.unsqueeze(0)
+                        .expand(batch_size, *self.bias_h.size()))
+        wi = torch.addmm(bias_batch_i, input_, self.weight_ih)
+        wh_b = torch.addmm(bias_batch_h, h_0, self.weight_hh)
         f, i, o, g = torch.split(wh_b + wi,
                                  split_size=self.hidden_size, dim=1)
         c_1 = torch.sigmoid(f)*c_0 + torch.sigmoid(i)*torch.tanh(g)
