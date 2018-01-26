@@ -1,3 +1,4 @@
+"""Top-down LSTM https://arxiv.org/pdf/1602.08210.pdf."""
 import math
 import torch
 from torch import nn
@@ -41,6 +42,7 @@ class TopDownLSTMCell(nn.Module):
         Initialize with standard init from PyTorch source 
         or from recurrent batchnorm paper https://arxiv.org/abs/1603.09025.
         """
+        print('init TopDownLSTMCell')
         stdv = 1.0 / math.sqrt(self.hidden_size)
         for weight in self.parameters():
             weight.data.uniform_(-stdv, stdv)
@@ -98,6 +100,7 @@ class TopDownLSTM(nn.Module):
         self.batch_first = batch_first
         self.batch_first_out = self.batch_first
         self.dropout = dropout
+        self.dropout_layer = nn.Dropout(self.dropout)
         # All layers, but top are TopDownLSTMCell
         for layer in range(num_layers-1):
             layer_input_size = input_size if layer == 0 else hidden_size
@@ -110,7 +113,7 @@ class TopDownLSTM(nn.Module):
                         hidden_size=hidden_size, 
                         **kwargs)
         setattr(self, 'cell_{}'.format(num_layers-1), cell)
-        self.dropout_layer = nn.Dropout(dropout)
+        self.dropout_layer = nn.Dropout(self.dropout)
         self.reset_parameters()
 
     def get_cell(self, layer):
@@ -142,8 +145,6 @@ class TopDownLSTM(nn.Module):
         c_n = []
         max_time = input_.size(0)
         output = []
-        max_time = input_.size(0)
-        output = []
         for t in range(max_time):
             for l in range(self.num_layers):
                 # Run lowest layer, special case, because it takes the word-embeddings
@@ -157,14 +158,14 @@ class TopDownLSTM(nn.Module):
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
                 # Replace with current state
                 elif l > 0 and l < self.num_layers - 1:
-                    top, bottom = Ht[l + 1], Ht[l - 1] 
+                    top, bottom = self.dropout_layer(Ht[l + 1]), self.dropout_layer(Ht[l - 1])
                     h_next, c_next = cell(input_bottom=bottom, 
                                           input_top=top,
                                           hx=hx)
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
                 # Run top layer vanilla LSTM
                 else:
-                    inp = Ht[l - 1]   # input is just the activation of the penultimate layer
+                    inp = self.dropout_layer(Ht[l - 1])   # input is just the activation of the penultimate layer
                     h_next, c_next = cell(input_=inp, hx=hx)
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
                     output.append(h_next)
