@@ -1,3 +1,7 @@
+"""
+Implements Hierachical Multiscale LSTM from 
+Hierarchical Multiscale Recurrent Networks https://arxiv.org/pdf/1609.01704.pdf
+"""
 import math
 import torch
 from torch import nn
@@ -122,12 +126,16 @@ class HMLSTM(nn.Module):
         assert num_layers >= 2, "Number of layers must be >= 2."
         self.input_size = input_size
         self.hidden_size = hidden_size
+	#FIXME make this not dependent on the hidden size
+        self.output_size = hidden_size
         self.num_layers = num_layers
         self.use_bias = use_bias
         self.batch_first = batch_first
         self.batch_first_out = self.batch_first
         self.dropout = dropout
         self.dropout_layer = nn.Dropout(self.dropout)
+        self.output_matrix = nn.Linear(self.hidden_size, self.output_size)
+        self.gate_vector = nn.Linear(self.num_layers * self.hidden_size, self.num_layers)  
         # Parameters of the gated output module
         for layer in range(num_layers):
             layer_input_size = input_size if layer == 0 else hidden_size
@@ -221,7 +229,13 @@ class HMLSTM(nn.Module):
                     h_next, c_next = cell(input_=inp, hx=hx)
                     h_next, c_next = copy_op(h_tm1, c_tm1, z_tm1, z_lm1, h_next, c_next, ones)
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
-                    output.append(h_next)
+		    # Gated output layer from equations 11 and 12
+		    Ht_hat = self.output_matrix(Ht.view(-1, self.hidden_size))
+		    g = functional.sigmoid(self.gate_vector(Ht.view(batch_size, -1)))
+		    gated = g.view(-1).unsqueeze(1) * Ht_hat
+		    gated = gated.view(self.num_layers, batch_size, -1)
+		    out = gated.sum(0)
+                    output.append(out)
                 # Update H and C arrays, but not in-place, because of autograd 
                 C_ = C.clone()
                 Ht_ = Ht.clone()
