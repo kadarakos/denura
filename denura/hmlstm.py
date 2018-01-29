@@ -1,3 +1,7 @@
+"""
+Implements Hierachical Multiscale LSTM from 
+Hierarchical Multiscale Recurrent Networks https://arxiv.org/pdf/1609.01704.pdf
+"""
 import math
 import torch
 from torch import nn
@@ -131,7 +135,7 @@ class HMLSTM(nn.Module):
         self.dropout = dropout
         self.dropout_layer = nn.Dropout(self.dropout)
         self.output_matrix = nn.Linear(self.hidden_size, self.output_size)
-        self.gate_vector = nn.Linear(self.num_layers * self.hidden_size, self.num_layers)          
+        self.gate_vector = nn.Linear(self.num_layers * self.hidden_size, self.num_layers)  
         # Parameters of the gated output module
         for layer in range(num_layers):
             layer_input_size = input_size if layer == 0 else hidden_size

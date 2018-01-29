@@ -6,10 +6,7 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 from torch.nn import functional, init
-from layer_norm import check_nan, require_nonleaf_grad
-from layer_norm import LayerNorm
 import math
-from layer_norm import st_gumbel_softmax, greedy_select
 import numpy as np
 
 
