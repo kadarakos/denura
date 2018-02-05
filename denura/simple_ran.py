@@ -27,6 +27,7 @@ class SimpleRANCell(nn.Module):
         self.weight_hh = nn.Parameter(
             torch.FloatTensor(hidden_size, 2 * hidden_size))
         if use_bias:
+            self.bias_i = nn.Parameter(torch.FloatTensor(2 * hidden_size))
             self.bias_h = nn.Parameter(torch.FloatTensor(2 * hidden_size))
         else:
             self.register_parameter('bias', None)
@@ -57,14 +58,15 @@ class SimpleRANCell(nn.Module):
         """
         c_0 = hx
         batch_size = c_0.size(0)
-        bias_batch = (self.bias_h.unsqueeze(0)
+        bias_batch_i = (self.bias_i.unsqueeze(0)
+                        .expand(batch_size, *self.bias_i.size()))
+        bias_batch_h = (self.bias_h.unsqueeze(0)
                         .expand(batch_size, *self.bias_h.size()))
         
-        wh_c = torch.addmm(bias_batch, c_0, self.weight_hh)
-        wi = torch.mm(input_, self.weight_ih)
-        f, i = torch.split(wh_c + wi,
-                           split_size=self.hidden_size, dim=1)
-        c_1 = torch.sigmoid(i) * input_  + torch.sigmoid(f) * torch.tanh(c_0)
+        wi = torch.addmm(bias_batch_i, input_, self.weight_ih)
+        wh_c = torch.addmm(bias_batch_h, c_0, self.weight_hh)
+        f, i = torch.split(wh_c + wi, split_size=self.hidden_size, dim=1)
+        c_1 = torch.sigmoid(i) * input_  + torch.sigmoid(f) * c_0
         return c_1
 
     def __repr__(self):
@@ -111,7 +113,7 @@ class SimpleRAN(nn.Module):
         for time in range(max_time):
             c_next = cell(input_=input_[time], hx=hx)
             mask = (time < length).float().unsqueeze(1).expand_as(c_next)
-            c_next = c_next*mask + hx * (1 - mask)
+            c_next = c_next * mask + hx * (1 - mask)
             output.append(c_next)
             hx = c_next
         output = torch.stack(output, 0)
