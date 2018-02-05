@@ -25,7 +25,8 @@ def st_hard_sigmoid(x, slope=0.2):
     """
     #TODO implement sampling variant (from Bernoulli)
     x = hard_sigmoid(x, slope)
-    x = torch.round(x).detach()
+    x_hard = torch.round(x)
+    x = (x_hard - x).detach() + x
     return x
 
 

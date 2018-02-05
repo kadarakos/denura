@@ -10,7 +10,7 @@ from torch.nn import functional, init
 from util import mask_time
 from lstm import LSTMCell
 from util import st_hard_sigmoid, size_splits, copy_op
-
+import numpy as np
 
 class HMLSTMCell(nn.Module):
 
@@ -66,7 +66,7 @@ class HMLSTMCell(nn.Module):
             init.constant(self.bias.data, val=0)
 
     def forward(self, input_bottom, input_top, hx,
-                z_tm1, z_lm1, training):
+                z_tm1, z_lm1):
         """
         Args:
             input_bottom: A (batch, input_size) tensor containing input
@@ -105,7 +105,7 @@ class HMLSTMCell(nn.Module):
         c_1 = mask.unsqueeze(1) * torch.sigmoid(f) * c_0 + torch.sigmoid(i) * torch.tanh(g)
         h_1 = torch.sigmoid(o) * torch.tanh(c_1)
         # TODO implement slope annealing trick
-        slope = 1.0
+        slope = 0.2
         z_mask = st_hard_sigmoid(z, slope).squeeze()
         return h_1, c_1, z_mask
 
@@ -162,14 +162,12 @@ class HMLSTM(nn.Module):
             cell.reset_parameters()
 
 
-    def forward(self, input_, training, length=None, hx=None,
-                pred_boundaries=False):
+    def forward(self, input_, hx=None, length=None, pred_boundaries=False):
         if self.batch_first:
             input_ = input_.transpose(0, 1)
         max_time, batch_size, _ = input_.size()
         if pred_boundaries:
             assert batch_size == 1, "Can only predict boundaries on a single example."
-            training = False
         if length is None:
             length = Variable(torch.LongTensor([max_time] * batch_size))
         if input_.is_cuda:
@@ -206,8 +204,8 @@ class HMLSTM(nn.Module):
                     z_lm1 = ones
                     h_next, c_next, z_next = cell(input_bottom=bottom, 
                                                   input_top=top, z_tm1=z_tm1, 
-                                                  z_lm1=z_lm1, hx=hx, training=training)
-                    h_next, c_next = copy_op(h_tm1, c_tm1, z_tm1, z_lm1, h_next, c_next, ones)
+                                                  z_lm1=z_lm1, hx=hx)
+                    # h_next, c_next = copy_op(h_tm1, c_tm1, z_tm1, z_lm1, h_next, c_next, ones)
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
                 # Replace with current state
                 elif l > 0 and l < self.num_layers - 1:
@@ -217,7 +215,7 @@ class HMLSTM(nn.Module):
                     z_lm1 = Z[l - 1]
                     h_next, c_next, z_next = cell(input_bottom=bottom, 
                                                   input_top=top, z_tm1=z_tm1, 
-                                                  z_lm1=z_lm1, hx=hx, training=training)
+                                                  z_lm1=z_lm1, hx=hx)
                     h_next, c_next = copy_op(h_tm1, c_tm1, z_tm1, z_lm1, h_next, c_next, ones)
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
                 # Run top layer vanilla LSTM
