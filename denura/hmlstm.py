@@ -204,7 +204,6 @@ class HMLSTM(nn.Module):
                     h_next, c_next, z_next = cell(input_bottom=bottom, 
                                                   input_top=top, z_tm1=z_tm1, 
                                                   z_lm1=z_lm1, hx=hx)
-                    # h_next, c_next = copy_op(h_tm1, c_tm1, z_tm1, z_lm1, h_next, c_next, ones)
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
                 # Replace with current state
                 elif l > 0 and l < self.num_layers - 1:
@@ -223,6 +222,7 @@ class HMLSTM(nn.Module):
                 else:
                     inp = Ht[l - 1]   # input is just the activation of the penultimate layer
                     z_tm1 = zeros  # top layer never detects boundary
+                    z_lm1 = Z[l - 1]
                     h_next, c_next = cell(input_=inp, hx=hx)
                     h_next, c_next = copy_op(h_tm1, c_tm1, z_tm1, z_lm1, h_next, c_next, ones)
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
