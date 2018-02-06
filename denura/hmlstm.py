@@ -31,7 +31,6 @@ class HMLSTMCell(nn.Module):
         """
 
         super(HMLSTMCell, self).__init__()
-        print("init MultiScaleLSTMCell")
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.use_bias = use_bias
@@ -122,7 +121,7 @@ class HMLSTM(nn.Module):
                  use_bias=True, batch_first=False, batch_first_out=False,
                  dropout=0, **kwargs):
         super(HMLSTM, self).__init__()
-        print("Running  MultiScaleLSTM")
+        print("Running HMLSTM")
         assert num_layers >= 2, "Number of layers must be >= 2."
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -227,13 +226,6 @@ class HMLSTM(nn.Module):
                     h_next, c_next = cell(input_=inp, hx=hx)
                     h_next, c_next = copy_op(h_tm1, c_tm1, z_tm1, z_lm1, h_next, c_next, ones)
                     h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
-                    # Gated output layer from equations 11 and 12
-                    Ht_hat = self.output_matrix(Ht.view(-1, self.hidden_size))
-                    g = functional.sigmoid(self.gate_vector(Ht.view(batch_size, -1)))
-                    gated = g.view(-1).unsqueeze(1) * Ht_hat
-                    gated = gated.view(self.num_layers, batch_size, -1)
-                    out = gated.sum(0)
-                    output.append(out)
                 # Update H and C arrays, but not in-place, because of autograd 
                 C_ = C.clone()
                 Ht_ = Ht.clone()
@@ -247,6 +239,13 @@ class HMLSTM(nn.Module):
                     Z = Z_
                 if pred_boundaries and l < self.num_layers - 1:
                     boundaries[l, t] = z_next.data.cpu().numpy()[0]
+            # Gated output layer from equations 11 and 12
+            Ht_hat = self.output_matrix(Ht.view(-1, self.hidden_size))
+            g = functional.sigmoid(self.gate_vector(Ht.view(batch_size, -1)))
+            gated = g.view(-1).unsqueeze(1) * Ht_hat
+            gated = gated.view(self.num_layers, batch_size, -1)
+            out = gated.sum(0)
+            output.append(out)
         output = torch.stack(output, 0)
         if self.batch_first_out:
             output = output.transpose(1, 0)
