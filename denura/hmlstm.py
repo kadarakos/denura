@@ -100,7 +100,7 @@ class BottomHMLSTMCell(nn.Module):
         c_1 = (1 - z_tm1).unsqueeze(1) * torch.sigmoid(f) * c_0 + torch.sigmoid(i) * torch.tanh(g)
         h_1 = torch.sigmoid(o) * torch.tanh(c_1)
         # TODO implement slope annealing trick
-        slope = 0.7
+        slope = 0.5
         z_mask = st_hard_sigmoid(z, slope).squeeze()
         return h_1, c_1, z_mask
 
@@ -387,14 +387,14 @@ class HMLSTM(nn.Module):
             length = length.cuda(device)
         if hx is None:     
             # Array to hold data h_t for all layers
-            Ht = Variable(input_.data.new(self.num_layers, batch_size, self.hidden_size).zero_())
+            Ht = [Variable(input_.data.new(batch_size, self.hidden_size).zero_()) for x in range(self.num_layers)]
             # Array to hold data c_t for all layers
-            C = Variable(input_.data.new(self.num_layers, batch_size, self.hidden_size).zero_())
+            C = [Variable(input_.data.new(batch_size, self.hidden_size).zero_()) for x in range(self.num_layers)]
             # Array to hold data for boundary variable z_t for all layers
             # Top layer doesn't have boundary detector
-            Z = Variable(input_.data.new(self.num_layers - 1, batch_size).zero_())
-            hx = (Ht, C, Z)
-        Ht, C, Z = hx
+            Z = [Variable(input_.data.new(batch_size).zero_()) for x in range(self.num_layers - 1)]
+            hx = [Ht, C, Z]
+        Ht, C, Z = map(list, hx)
         if pred_boundaries:
             boundaries = np.zeros((self.num_layers - 1, max_time))
             gates = []
@@ -415,7 +415,9 @@ class HMLSTM(nn.Module):
                     h_next, c_next, z_next = mask_time(t, length, 
                                                        [h_next, c_next, z_next],
                                                        [hx[0], hx[1], z_tm1])
-                    Ht, C, Z = self.update_state(Ht, h_next, C, c_next, l, Z, z_next)
+                    # Ht, C, Z = self.update_state(Ht, h_next, C, c_next, l, Z, z_next)
+                    # print(Ht)
+                    Ht[l], C[l], Z[l] = h_next, c_next, z_next
                 #TODO handle general case 
                 elif l > 0 and l < self.num_layers - 1:
                     top = Ht[l + 1]      # previous step from higher layer
@@ -435,12 +437,14 @@ class HMLSTM(nn.Module):
                     h_next, c_next = cell(input_=bottom, z_lm1=z_lm1, hx=hx)
                     h_next, c_next = mask_time(t, length, [h_next, c_next], 
                                               [hx[0], hx[1]])
-                    Ht, C = self.update_state(Ht, h_next, C, c_next, l)
+                    Ht[l], C[l] = h_next, c_next
+                    #Ht, C = self.update_state(Ht, h_next, C, c_next, l)
                 if pred_boundaries and l < self.num_layers - 1:
                     boundaries[l, t] = z_next.data.cpu().numpy()[0]
             # Gated output layer from equations 11 and 12
-            Ht_hat = self.output_matrix(Ht.view(-1, self.hidden_size))
-            g = functional.sigmoid(self.gate_vector(Ht.view(batch_size, -1)))
+            Ht_ = torch.stack(Ht)
+            Ht_hat = self.output_matrix(Ht_.view(-1, self.hidden_size))
+            g = functional.sigmoid(self.gate_vector(Ht_.view(batch_size, -1)))
             gated = g.view(-1).unsqueeze(1) * Ht_hat
             gated = gated.view(self.num_layers, batch_size, -1)
             out = gated.sum(0)
