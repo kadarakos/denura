@@ -233,7 +233,6 @@ class HMLSTMCell(nn.Module):
             self.bias = nn.Parameter(torch.FloatTensor(4 * hidden_size + 1))
         else:
             self.register_parameter('bias', None)
-        self.reset_parameters()
 
 
     def reset_parameters(self):
@@ -250,8 +249,7 @@ class HMLSTMCell(nn.Module):
         if self.use_bias:
             init.constant(self.bias.data, val=0)
 
-    def forward(self, input_bottom, input_top, hx,
-                z_tm1=None, z_lm1=None):
+    def forward(self, input_bottom, input_top, hx, z_tm1, z_lm1):
         """
         Args:
             input_bottom: A (batch, input_size) tensor containing input
@@ -278,33 +276,21 @@ class HMLSTMCell(nn.Module):
         # Recurrent
         wh_b = torch.addmm(bias_batch, h_0, self.weight_hh)
         # Bottom-up, mask where z = 0
-        wb = torch.mm(input_bottom, self.weight_bh)
+        wb = z_lm1.unsqueeze(1) * torch.mm(input_bottom, self.weight_bh)
         # Top-down, mask where z = 0
-        wt = torch.mm(input_top, self.weight_th)
-        # Lowest layer doen"t get z_lm1
-        if z_lm1 is not None:
-            wb = z_lm1.unsqueeze(1) * wb
-        # Highest layer doesn"t get z_tm1
-        if z_tm1 is not None:
-            wt = z_tm1.unsqueeze(1) * wt
-            mask = (1 - z_tm1).unsqueeze(1)
-        # New Boundary variable z
+        wt = z_tm1.unsqueeze(1) * torch.mm(input_top, self.weight_th)
         f, i, o, g, z = size_splits(wh_b + wb + wt,
                                     split_sizes=[self.hidden_size, self.hidden_size, 
                                                  self.hidden_size, self.hidden_size, 1],
                                                  dim=1)
-        if z_tm1 is not None:
-            past = mask * torch.sigmoid(f) * c_0 
-        else: 
-            past = torch.sigmoid(f) * c_0 
-        if z_tm1 is not None:
-            write = z_tm1 + z_lm1 == 0
-        else:
-            write = z_lm1 == 0
-        c_1 = past + torch.sigmoid(i) * torch.tanh(g)
+        c_1 = (1 - z_tm1).unsqueeze(1) * torch.sigmoid(f) * c_0 + torch.sigmoid(i) * torch.tanh(g)
         h_1 = torch.sigmoid(o) * torch.tanh(c_1)
+        # Run COPY, if both z_tm1 and z_lm1 is 0 take previous state, take new otherwise
+        mask = torch.clamp(z_lm1 + z_tm1, max=1)
+        c_1 = mask.unsqueeze(1) * c_1 + (1 - mask).unsqueeze(1) * c_0
+        h_1 = mask.unsqueeze(1) * h_1 + (1 - mask).unsqueeze(1) * h_0
         # TODO implement slope annealing trick
-        slope = 0.2
+        slope = 0.5
         z_mask = st_hard_sigmoid(z, slope).squeeze()
         return h_1, c_1, z_mask
 
@@ -361,18 +347,6 @@ class HMLSTM(nn.Module):
             cell = self.get_cell(layer)
             cell.reset_parameters()
 
-    def update_state(self, H, h,  C, c, l, Z=None, z=None):
-        C_ = C.clone()
-        H_ = H.clone()
-        C_[l] = C[l] * 0 + c
-        H_[l] = H[l] * 0 + h
-        if Z is not None:
-            Z_ = Z.clone()
-            Z_[l] = Z[l] * 0 + z
-            return H_, C_, Z_
-        else:
-            return H_, C_
-
 
     def forward(self, input_, hx=None, length=None, pred_boundaries=False, show_z=False):
         if self.batch_first:
@@ -415,8 +389,6 @@ class HMLSTM(nn.Module):
                     h_next, c_next, z_next = mask_time(t, length, 
                                                        [h_next, c_next, z_next],
                                                        [hx[0], hx[1], z_tm1])
-                    # Ht, C, Z = self.update_state(Ht, h_next, C, c_next, l, Z, z_next)
-                    # print(Ht)
                     Ht[l], C[l], Z[l] = h_next, c_next, z_next
                 #TODO handle general case 
                 elif l > 0 and l < self.num_layers - 1:
@@ -427,9 +399,10 @@ class HMLSTM(nn.Module):
                     h_next, c_next, z_next = cell(input_bottom=bottom, 
                                                   input_top=top, z_tm1=z_tm1, 
                                                   z_lm1=z_lm1, hx=hx)
-                    h_next, c_next = copy_op(h_tm1, c_tm1, h_next, c_next, z_lm1, z_tm1)
-                    h_next, c_next = mask_time(t, length, h_next, c_next, hx[0], hx[1])
-                    Ht, C, Z = self.update_state(Ht, h_next, C, c_next, l, Z, z_next)
+                    h_next, c_next, z_next = mask_time(t, length, 
+                                                       [h_next, c_next, z_next],
+                                                       [hx[0], hx[1], z_tm1])
+                    Ht[l], C[l], Z[l] = h_next, c_next, z_next
                 else:
                     bottom = Ht[l - 1]   # input is just the activation of the penultimate layer
                     z_lm1 = Z[l - 1]
