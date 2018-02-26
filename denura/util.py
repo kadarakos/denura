@@ -1,12 +1,17 @@
 import torch.nn.functional as F
 import torch
 
-def mask_time(t, length, h, c, h_, c_):
-    """Returns new state if t < length else copies old state over."""
-    mask = (t < length).float().unsqueeze(1).expand_as(h)
-    h_next = h * mask + h_ * (1 - mask)
-    c_next = c * mask + c_ * (1 - mask)
-    return h_next, c_next
+def mask_time(t, length, new, past):
+    """
+    Returns new state if t < length else copies old state over.
+    new: iterable containing new states [h, c, z, ..]
+    old: iterable containing past states [h_tm1, c_tm1, z_tm1, ..]
+    """   
+    for n, p in zip(new, past):
+        mask = (t < length).float()
+        if len(n.size()) > 1:
+            mask = mask.unsqueeze(1).expand_as(n)
+        yield n * mask + p * (1 - mask)
 
 def hard_sigmoid(x, slope=0.2):
     """
@@ -50,9 +55,15 @@ def size_splits(tensor, split_sizes, dim=0):
     return tuple(tensor.narrow(int(dim), int(start), int(length)) 
         for start, length in zip(splits, split_sizes))
 
-def copy_op(h_tm1, c_tm1, z_tm1, z_lm1, h_next, c_next, ones):
+def copy_op(h_tm1, c_tm1, h_next, c_next, z_lm1=None, z_tm1=None):
     """COPY op for MultiscaleLSTM. Keep or replace old state."""
-    write = torch.min(ones, z_tm1 + z_lm1).unsqueeze(1)
+    # write = torch.min(ones, z_tm1 + z_lm1).unsqueeze(1)
+    # Highest layer doesnt have z_tm1
+    if z_tm1 is not None:
+        write = z_tm1 + z_lm1 == 0
+    else:
+        write = z_lm1 == 0
+    write = write.unsqueeze(1).float()
     c_next = (1 - write) * c_tm1 + write * c_next
     h_next = (1 - write) * h_tm1 + write * h_next
     return h_next, c_next 
