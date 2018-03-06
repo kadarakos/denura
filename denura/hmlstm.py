@@ -100,7 +100,7 @@ class BottomHMLSTMCell(nn.Module):
         c_1 = (1 - z_tm1).unsqueeze(1) * torch.sigmoid(f) * c_0 + torch.sigmoid(i) * torch.tanh(g)
         h_1 = torch.sigmoid(o) * torch.tanh(c_1)
         # TODO implement slope annealing trick
-        slope = 0.5
+        slope = 0.7
         z_mask = st_hard_sigmoid(z, slope).squeeze()
         return h_1, c_1, z_mask
 
@@ -283,6 +283,7 @@ class HMLSTMCell(nn.Module):
                                     split_sizes=[self.hidden_size, self.hidden_size, 
                                                  self.hidden_size, self.hidden_size, 1],
                                                  dim=1)
+        z_mask = st_hard_sigmoid(z, slope).squeeze()
         c_1 = (1 - z_tm1).unsqueeze(1) * torch.sigmoid(f) * c_0 + torch.sigmoid(i) * torch.tanh(g)
         h_1 = torch.sigmoid(o) * torch.tanh(c_1)
         # Run COPY, if both z_tm1 and z_lm1 is 0 take previous state, take new otherwise
@@ -290,8 +291,8 @@ class HMLSTMCell(nn.Module):
         c_1 = mask.unsqueeze(1) * c_1 + (1 - mask).unsqueeze(1) * c_0
         h_1 = mask.unsqueeze(1) * h_1 + (1 - mask).unsqueeze(1) * h_0
         # TODO implement slope annealing trick
-        slope = 0.5
-        z_mask = st_hard_sigmoid(z, slope).squeeze()
+        slope = 0.7
+        # print(torch.sum(z_mask))
         return h_1, c_1, z_mask
 
     def __repr__(self):
@@ -389,7 +390,7 @@ class HMLSTM(nn.Module):
                     h_next, c_next, z_next = mask_time(t, length, 
                                                        [h_next, c_next, z_next],
                                                        [hx[0], hx[1], z_tm1])
-                    Ht[l], C[l], Z[l] = h_next, c_next, z_next
+                    Ht[l], C[l], Z[l] = h_next, c_next, z_next 
                 #TODO handle general case 
                 elif l > 0 and l < self.num_layers - 1:
                     top = Ht[l + 1]      # previous step from higher layer
@@ -415,12 +416,14 @@ class HMLSTM(nn.Module):
                 if pred_boundaries and l < self.num_layers - 1:
                     boundaries[l, t] = z_next.data.cpu().numpy()[0]
             # Gated output layer from equations 11 and 12
+            #TODO have separate output matrix for each layer`
             Ht_ = torch.stack(Ht)
             Ht_hat = self.output_matrix(Ht_.view(-1, self.hidden_size))
             g = functional.sigmoid(self.gate_vector(Ht_.view(batch_size, -1)))
             gated = g.view(-1).unsqueeze(1) * Ht_hat
             gated = gated.view(self.num_layers, batch_size, -1)
             out = gated.sum(0)
+            out = nn.ReLU(out)
             output.append(out)
             if pred_boundaries:
                 gates.append(g.data.cpu().numpy()[0])
